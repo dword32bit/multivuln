@@ -65,10 +65,15 @@ generate_index() {
     echo "[+] index.php created."
 }
 
-# Setup MySQL passwordless root
+# Setup MySQL root password only if not set
 secure_mysql() {
-    echo "[*] Configuring MySQL root access..."
-    mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY ''; FLUSH PRIVILEGES;" 2>/dev/null
+    echo "[*] Securing MySQL..."
+    MYSQL_PASS_FILE="$CACHE_DIR/.mysql_pass"
+    if [ ! -f "$MYSQL_PASS_FILE" ]; then
+        echo "[*] Setting default root password to 'vulnlab'..."
+        mysql -u root -e "ALTER USER 'root'@'localhost' IDENTIFIED BY 'vulnlab'; FLUSH PRIVILEGES;" 2>/dev/null
+        echo "vulnlab" > "$MYSQL_PASS_FILE"
+    fi
 }
 
 # Fungsi generik untuk install aplikasi dari folder
@@ -87,7 +92,11 @@ install_app() {
 
     mkdir -p "$WEBROOT/$webdir"
     cp -r "$sourcedir"/* "$WEBROOT/$webdir/"
-    [ -n "$dbname" ] && mysql -u root -e "CREATE DATABASE IF NOT EXISTS $dbname;"
+
+    if [ -n "$dbname" ]; then
+        local mysqlpass=$(cat "$CACHE_DIR/.mysql_pass")
+        mysql -u root -p"$mysqlpass" -e "CREATE DATABASE IF NOT EXISTS $dbname;"
+    fi
     echo "[+] $webdir installed."
 }
 
