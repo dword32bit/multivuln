@@ -8,6 +8,10 @@ WEBROOT="/var/www/html"
 mkdir -p "$CACHE_DIR"
 mkdir -p "$WEBROOT"
 
+# Hapus semua isi webroot (bersih total)
+echo "[*] Cleaning up $WEBROOT..."
+rm -rf "$WEBROOT"/*
+
 # Fungsi untuk download dengan cache
 cached_download() {
     local url="$1"
@@ -52,23 +56,25 @@ setup_apache() {
     echo "[*] Setting up Apache web server..."
     apt-get update -qq && apt-get install -y apache2 php unzip git mariadb-server libapache2-mod-php php-mysqli > /dev/null
     systemctl enable apache2 && systemctl start apache2
-    rm -f "$WEBROOT/index.html"  # Remove default Apache page
     chown -R www-data:www-data "$WEBROOT"
     echo "[+] Apache configured."
 }
 
-# Buat halaman index
+# Buat halaman index.php
 generate_index() {
-    echo "[*] Generating index.html..."
+    echo "[*] Generating index.php..."
     {
-        echo "<html><head><title>Vuln Lab</title></head><body><h1>Vulnerable Web Apps</h1><ul>"
-        for folder in "$WEBROOT"/*; do
-            name=$(basename "$folder")
-            echo "<li><a href=\"/$name\">$name</a></li>"
-        done
-        echo "</ul></body></html>"
-    } > "$WEBROOT/index.html"
-    echo "[+] index.html created."
+        echo "<?php"
+        echo "echo '<html><head><title>Vuln Lab</title></head><body><h1>Vulnerable Web Apps</h1><ul>';"
+        echo "foreach (scandir('.') as \$entry) {"
+        echo "  if (\$entry !== '.' && \$entry !== '..' && is_dir(\$entry)) {"
+        echo "    echo \"<li><a href='/\$entry'>\$entry</a></li>\";"
+        echo "  }"
+        echo "}"
+        echo "echo '</ul></body></html>';"
+        echo "?>"
+    } > "$WEBROOT/index.php"
+    echo "[+] index.php created."
 }
 
 # Setup MySQL passwordless root (only if no password set)
