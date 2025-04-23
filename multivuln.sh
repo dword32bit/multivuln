@@ -1,57 +1,96 @@
 #!/bin/bash
+# Vuln Lab ULTIMATE Installer - Extended Edition
+# Includes multiple vulnerable web apps with local caching to /opt/multivuln
 
 set -e
 
-CACHE_DIR="/opt/multivuln"
-INSTALL_DIR="/var/www/html"
-mkdir -p "$CACHE_DIR"
-mkdir -p "$INSTALL_DIR"
+MULTIVULN_DIR="/opt/multivuln"
+WWW_DIR="/var/www/html"
+MYSQL_ROOT_PW="rootpass"
 
-function download_and_extract {
-    NAME=$1
-    URL=$2
-    FILE=$3
-    DEST_DIR=$4
+mkdir -p "$MULTIVULN_DIR"
 
-    echo "[*] Installing $NAME..."
-
-    if [ -f "$CACHE_DIR/$FILE" ]; then
-        echo "[+] Using cached $FILE"
-    else
-        echo "[!] Downloading $FILE..."
-        wget -O "$CACHE_DIR/$FILE" "$URL"
-    fi
-
-    echo "[+] Extracting $FILE to $DEST_DIR..."
-    mkdir -p "$DEST_DIR"
-    case $FILE in
-        *.zip)
-            unzip -qo "$CACHE_DIR/$FILE" -d "$DEST_DIR" || echo "[!] Warning: unzip failed for $FILE"
-            ;;
-        *.tgz | *.tar.gz)
-            tar -xzf "$CACHE_DIR/$FILE" -C "$DEST_DIR"
-            ;;
-        *)
-            echo "[!] Unsupported file type for $FILE"
-            ;;
-    esac
-    echo "[+] $NAME installed."
-    echo
+log_info() {
+  echo -e "\033[1;34m[+] $1\033[0m"
 }
 
-# List of apps to install
-apps=(
-    "Mutillidae|https://github.com/webpwnized/mutillidae/archive/refs/heads/master.zip|mutillidae.zip"
-    "NodeGoat|https://github.com/OWASP/NodeGoat/archive/refs/heads/master.zip|nodegoat.zip"
-    "SecurityShepherd|https://github.com/OWASP/SecurityShepherd/archive/refs/heads/master.zip|securityshepherd.zip"
-    "Hackazon|https://github.com/rapid7/hackazon/archive/refs/heads/master.zip|hackazon.zip"
-    "XSSGame|https://github.com/google/xss-game/archive/refs/heads/master.zip|xss-game.zip"
-    "PixiCR|https://github.com/sectooladdict/pixi-cr/archive/refs/heads/master.zip|pixi-cr.zip"
-)
+log_warn() {
+  echo -e "\033[1;33m[!] $1\033[0m"
+}
 
-for app in "${apps[@]}"; do
-    IFS='|' read -r NAME URL FILE <<< "$app"
-    download_and_extract "$NAME" "$URL" "$FILE" "$INSTALL_DIR/$NAME"
-done
+download_or_use_cache() {
+  local url="$1"
+  local dest="$2"
+  local filename=$(basename "$dest")
 
-echo "[✓] All apps installed!"
+  if [ -f "$MULTIVULN_DIR/$filename" ]; then
+    log_info "Using cached $filename from $MULTIVULN_DIR"
+    cp "$MULTIVULN_DIR/$filename" "$dest"
+  else
+    log_info "Downloading $filename..."
+    wget "$url" -O "$dest"
+    cp "$dest" "$MULTIVULN_DIR/$filename"
+  fi
+}
+
+install_sqlilabs() {
+  log_info "Installing SQLi-Labs..."
+  rm -rf "$WWW_DIR/sqlilabs"
+  git clone https://github.com/Audi-1/sqli-labs.git "$WWW_DIR/sqlilabs"
+  chown -R www-data:www-data "$WWW_DIR/sqlilabs"
+}
+
+install_mutillidae() {
+  log_info "Installing Mutillidae II..."
+  rm -rf "$WWW_DIR/mutillidae"
+  git clone https://github.com/webpwnized/mutillidae.git "$WWW_DIR/mutillidae"
+  chown -R www-data:www-data "$WWW_DIR/mutillidae"
+}
+
+install_webgoat() {
+  log_info "Installing WebGoat..."
+  local jar="$MULTIVULN_DIR/webgoat.jar"
+  download_or_use_cache "https://github.com/WebGoat/WebGoat/releases/latest/download/webgoat-server.jar" "$jar"
+  cp "$jar" "$WWW_DIR/webgoat.jar"
+  chmod +x "$WWW_DIR/webgoat.jar"
+  log_info "WebGoat jar copied to $WWW_DIR/webgoat.jar. Run manually with: java -jar /var/www/html/webgoat.jar"
+}
+
+install_xvwa() {
+  log_info "Installing XVWA..."
+  rm -rf "$WWW_DIR/xvwa"
+  git clone https://github.com/s4n7h0/xvwa.git "$WWW_DIR/xvwa"
+  chown -R www-data:www-data "$WWW_DIR/xvwa"
+}
+
+install_security_shepherd() {
+  log_info "Installing OWASP Security Shepherd..."
+  rm -rf "$WWW_DIR/shepherd"
+  git clone https://github.com/OWASP/SecurityShepherd.git "$WWW_DIR/shepherd"
+  chown -R www-data:www-data "$WWW_DIR/shepherd"
+}
+
+configure_apache() {
+  log_info "Configuring Apache Web Server..."
+  a2enmod rewrite
+  systemctl restart apache2
+  log_info "Apache restarted. Apps are hosted in $WWW_DIR"
+}
+
+# Installation steps
+apt update
+apt install -y apache2 php php-mysqli mariadb-server git unzip curl openjdk-17-jre-headless wget
+
+systemctl enable apache2
+systemctl start apache2
+systemctl start mysql || service mysql start
+
+install_sqlilabs
+install_mutillidae
+install_webgoat
+install_xvwa
+install_security_shepherd
+
+configure_apache
+
+log_info "All selected apps have been installed."
