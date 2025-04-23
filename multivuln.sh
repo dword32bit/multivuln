@@ -1,7 +1,6 @@
 
 #!/bin/bash
 # Vuln Lab ULTIMATE Installer - by dword32bit
-# Playground lengkap untuk level pemula sampai pro
 
 set -e
 
